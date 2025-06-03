@@ -1,0 +1,163 @@
+# HTTP блок - только редирект на HTTPS
+server {
+    listen 79.133.183.8680;
+    listen 80;
+    server_name vdestor.ru www.vdestor.ru;
+    return 301 https$server_name$request_uri;
+}
+
+# HTTPS основной блок
+server {
+    listen 79.133.183.86443 ssl http2;
+    listen 443 ssl http2;
+    server_name vdestor.ru www.vdestor.ru;
+    
+    root varwwwwww-rootdatasitevdestor.rupublic;
+    index index.php index.html;
+
+    # SSL
+    ssl_certificate varwwwhttpd-certwww-rootvdestor.ru_le2.crtca;
+    ssl_certificate_key varwwwhttpd-certwww-rootvdestor.ru_le2.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers on;
+    ssl_dhparam etcsslcertsdhparam4096.pem;
+    ssl_ciphers EECDH+AES256-3DESRSA+AES!NULL!RC4;
+    ssl_session_cache sharedSSL50m;
+    ssl_session_timeout 1d;
+
+    # Безопасность
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-Frame-Options DENY always;
+    add_header X-XSS-Protection 1; mode=block always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+
+    # Логи
+    access_log varwwwhttpd-logsvdestor.ru.access.log;
+    error_log varwwwhttpd-logsvdestor.ru.error.log notice;
+
+    # Gzip
+    gzip on;
+    gzip_comp_level 6;
+    gzip_types textplain textcss applicationjson applicationjavascript textxml applicationxml applicationxml+rss textjavascript imagesvg+xml;
+
+    # Редирект www на без www
+    if ($host = www.vdestor.ru) {
+        return 301 httpsvdestor.ru$request_uri;
+    }
+
+    # Защита системных файлов
+    location ~ .(envgitsvnhtDS_Store) {
+        deny all;
+        return 404;
+    }
+
+    # Защита конфигов
+    location ~ ^(configsrcvendor) {
+        deny all;
+        return 404;
+    }
+
+    # Точный путь api без слеша
+    location = api {
+        try_files $uri index.php$query_string;
+    }
+
+    # API маршруты
+    location ^~ api {
+        try_files $uri index.php$query_string;
+    }
+
+    # Статика с оптимизацией
+    location ~ .(jpgjpeggifpngsvgjscssicowoffwoff2ttfeotmp4webmwebp)$ {
+        expires 30d;
+        add_header Cache-Control public, immutable;
+        add_header Access-Control-Allow-Origin ;
+        try_files $uri =404;
+    }
+
+    # ==== ВАЖНО ПРАВИЛЬНЫЙ ПОРЯДОК PHP БЛОКОВ ====
+    
+    # 1. СНАЧАЛА специальный блок для админки
+    location ^~ admin {
+        try_files $uri $uri index.php$query_string;
+        
+        location ~ .php$ {
+            fastcgi_pass unixrunphpphp8.1-fpm.sock;
+            fastcgi_index index.php;
+            fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+            include fastcgi_params;
+            
+            # Максимальные настройки для админки
+            fastcgi_read_timeout 3600;
+            fastcgi_send_timeout 3600;
+            fastcgi_connect_timeout 3600;
+            
+            # Большие буферы для диагностики
+            fastcgi_buffer_size 256k;
+            fastcgi_buffers 256 32k;
+            fastcgi_busy_buffers_size 512k;
+            fastcgi_temp_file_write_size 512k;
+            fastcgi_max_temp_file_size 0;
+            
+            # PHP настройки для админки
+            fastcgi_param PHP_VALUE 
+                memory_limit=8192M
+                max_execution_time=0
+                display_errors=On
+                error_reporting=E_ALL
+            ;
+        }
+    }
+    
+    # 2. API обработчик (если используется отдельный пул)
+    location ^~ api {
+        location ~ .php$ {
+            fastcgi_pass unixvarwwwphp-fpm2.sock;  # API пул
+            fastcgi_index index.php;
+            fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+            include fastcgi_params;
+            
+            fastcgi_read_timeout 600;
+            fastcgi_send_timeout 600;
+            fastcgi_buffer_size 128k;
+            fastcgi_buffers 128 16k;
+            fastcgi_busy_buffers_size 256k;
+        }
+    }
+
+    # 3. Основной маршрутинг
+    location  {
+        try_files $uri $uri index.php$query_string;
+    }
+
+    # 4. ПОСЛЕДНИМ - общий PHP обработчик
+    location ~ .php$ {
+        # Защита от выполнения PHP в загрузках
+        if ($uri ~ uploads) {
+            return 404;
+        }
+
+        fastcgi_pass unixrunphpphp8.1-fpm.sock;
+        fastcgi_index index.php;
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        include fastcgi_params;
+        
+        # Дополнительные параметры
+        fastcgi_param PHP_ADMIN_VALUE sendmail_path = usrsbinsendmail -t -i -f vde76ru@yandex.ru;
+        fastcgi_param HTTPS on;
+        fastcgi_param HTTP_X_FORWARDED_PROTO $scheme;
+        
+        # Оптимизированные буферы
+        fastcgi_buffer_size 128k;
+        fastcgi_buffers 128 16k;
+        fastcgi_busy_buffers_size 256k;
+        fastcgi_temp_file_write_size 256k;
+        
+        # Таймауты
+        fastcgi_read_timeout 600;
+        fastcgi_send_timeout 600;
+        fastcgi_connect_timeout 300;
+    }
+    
+    # НЕ ДОБАВЛЯТЬ блок internal для PHP!
+}
